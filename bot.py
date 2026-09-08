@@ -87,13 +87,20 @@ def _foto_request(prompt):
 
 def _vid_request(photo_path, prompt):
     from gradio_client import Client
+    from PIL import Image
+
+    img = Image.open(photo_path)
+    img = img.resize((512, 512), Image.LANCZOS)
+    resized_path = "temp_input.jpg"
+    img.save(resized_path, quality=85)
+
     c = Client("multimodalart/stable-video-diffusion")
     result = c.predict(
-        image=photo_path,
+        image=resized_path,
         seed=0,
         randomize_seed=True,
-        motion_bucket_id=127,
-        fps_id=6,
+        motion_bucket_id=40,
+        fps_id=4,
         api_name="/video"
     )
     video_data = result[0]
