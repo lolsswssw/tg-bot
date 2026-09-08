@@ -86,29 +86,48 @@ def _foto_request(prompt):
     return r.content
 
 def _vid_request(photo_path, prompt):
-    from gradio_client import Client
-    from PIL import Image
+    import urllib.parse
 
-    img = Image.open(photo_path)
-    img = img.resize((512, 512), Image.LANCZOS)
-    resized_path = "temp_input.jpg"
-    img.save(resized_path, quality=85)
+    # Method 1: Pollinations video
+    try:
+        encoded = urllib.parse.quote(prompt)
+        url = f"https://video.pollinations.ai/{encoded}?image={photo_path}&model=fast"
+        r = requests.get(url, timeout=120)
+        if r.status_code == 200 and len(r.content) > 5000:
+            out_path = "temp_video.mp4"
+            with open(out_path, "wb") as f:
+                f.write(r.content)
+            return out_path
+    except:
+        pass
 
-    c = Client("multimodalart/stable-video-diffusion")
-    result = c.predict(
-        image=resized_path,
-        seed=0,
-        randomize_seed=True,
-        motion_bucket_id=40,
-        fps_id=4,
-        api_name="/video"
-    )
-    video_data = result[0]
-    video_path = video_data["video"]
-    out_path = "temp_video.mp4"
-    import shutil
-    shutil.copy(video_path, out_path)
-    return out_path
+    # Method 2: HuggingFace Space
+    try:
+        from gradio_client import Client
+        from PIL import Image
+        img = Image.open(photo_path)
+        img = img.resize((512, 512), Image.LANCZOS)
+        resized_path = "temp_input.jpg"
+        img.save(resized_path, quality=85)
+        c = Client("multimodalart/stable-video-diffusion")
+        result = c.predict(
+            image=resized_path,
+            seed=0,
+            randomize_seed=True,
+            motion_bucket_id=50,
+            fps_id=4,
+            api_name="/video"
+        )
+        video_data = result[0]
+        video_path = video_data["video"]
+        out_path = "temp_video.mp4"
+        import shutil
+        shutil.copy(video_path, out_path)
+        return out_path
+    except:
+        pass
+
+    raise Exception("Video generation failed")
 
 async def gpt_cmd(update, context):
     if not context.args:
