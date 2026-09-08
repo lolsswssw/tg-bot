@@ -87,32 +87,27 @@ def _foto_request(prompt):
 
 def _vid_request(photo_path, prompt):
     import imageio.v3 as iio
-    from PIL import Image, ImageFilter
+    from PIL import Image
     import numpy as np
 
     img = Image.open(photo_path).convert("RGB")
-    img = img.resize((512, 512), Image.LANCZOS)
+    img = img.resize((480, 480), Image.LANCZOS)
 
     frames = []
-    num_frames = 30
+    num_frames = 24
 
     for i in range(num_frames):
-        frame = img.copy()
-        factor = 1.0 + 0.003 * i
-        new_size = (int(512 * factor), int(512 * factor))
-        resized = frame.resize(new_size, Image.LANCZOS)
-        left = (new_size[0] - 512) // 2
-        top = (new_size[1] - 512) // 2
-        cropped = resized.crop((left, top, left + 512, top + 512))
-
-        if i % 3 == 0:
-            cropped = cropped.filter(ImageFilter.SHARPEN)
-
-        arr = np.array(cropped)
-        frames.append(arr)
+        factor = 1.0 + 0.005 * i
+        new_w = int(480 * factor)
+        new_h = int(480 * factor)
+        resized = img.resize((new_w, new_h), Image.LANCZOS)
+        left = (new_w - 480) // 2
+        top = (new_h - 480) // 2
+        cropped = resized.crop((left, top, left + 480, top + 480))
+        frames.append(np.array(cropped))
 
     out_path = "temp_video.mp4"
-    iio.imwrite(out_path, frames, fps=15, codec="libx264", plugin="pyav")
+    iio.imwrite(out_path, np.stack(frames), fps=12, codec="libx264")
     return out_path
 
 async def gpt_cmd(update, context):
