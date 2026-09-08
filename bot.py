@@ -87,22 +87,21 @@ def _foto_request(prompt):
 
 def _vid_request(photo_path, prompt):
     from PIL import Image
-    import io
 
     img = Image.open(photo_path).convert("RGB")
-    img = img.resize((480, 480), Image.LANCZOS)
+    img = img.resize((320, 320), Image.LANCZOS)
 
     frames = []
-    num_frames = 24
+    num_frames = 12
 
     for i in range(num_frames):
-        factor = 1.0 + 0.005 * i
-        new_w = int(480 * factor)
-        new_h = int(480 * factor)
+        factor = 1.0 + 0.008 * i
+        new_w = int(320 * factor)
+        new_h = int(320 * factor)
         resized = img.resize((new_w, new_h), Image.LANCZOS)
-        left = (new_w - 480) // 2
-        top = (new_h - 480) // 2
-        cropped = resized.crop((left, top, left + 480, top + 480))
+        left = (new_w - 320) // 2
+        top = (new_h - 320) // 2
+        cropped = resized.crop((left, top, left + 320, top + 320))
         frames.append(cropped)
 
     out_path = "temp_video.gif"
@@ -110,7 +109,7 @@ def _vid_request(photo_path, prompt):
         out_path,
         save_all=True,
         append_images=frames[1:],
-        duration=80,
+        duration=100,
         loop=0,
         optimize=True
     )
