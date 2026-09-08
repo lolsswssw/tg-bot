@@ -73,23 +73,23 @@ async def gpt_cmd(update, context):
     status = await update.message.reply_text("🧠 Думаю...")
     await update.message.chat.send_action(ChatAction.TYPING)
     try:
-        async with httpx.AsyncClient(timeout=60.0) as http:
-            r = await http.post(
+        async with httpx.AsyncClient(timeout=90.0) as http:
+            r = await http.get(
                 "https://text.pollinations.ai/",
-                json={
-                    "messages": [
-                        {"role": "system", "content": "Ты умный помощник. Отвечай на русском языке кратко и по делу."},
-                        {"role": "user", "content": question}
-                    ],
-                    "model": "openai"
-                },
-                headers={"Content-Type": "application/json"}
+                params={
+                    "message": question,
+                    "model": "openai",
+                    "system": "Ты умный помощник. Отвечай на русском языке кратко и по делу."
+                }
             )
             if r.status_code == 200:
-                answer = r.text
-                await status.edit(f"🧠 *Ответ:*\n\n{answer}", parse_mode="Markdown")
+                answer = r.text.strip()
+                if answer:
+                    await status.edit(f"🧠 *Ответ:*\n\n{answer}", parse_mode="Markdown")
+                else:
+                    await status.edit("❌ Пустой ответ от AI.")
             else:
-                await status.edit(f"❌ Ошибка: {r.status_code}")
+                await status.edit(f"❌ Ошибка API: {r.status_code}")
     except Exception as e:
         await status.edit(f"❌ Ошибка: {str(e)[:200]}")
 
@@ -100,10 +100,12 @@ async def foto_cmd(update, context):
     status = await update.message.reply_text("🎨 Генерирую фото...")
     await update.message.chat.send_action(ChatAction.UPLOAD_PHOTO)
     try:
-        url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true"
+        import urllib.parse
+        encoded = urllib.parse.quote(prompt)
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&model=flux&nologo=true&seed={random.randint(1,99999)}"
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as http:
             r = await http.get(url)
-            if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
+            if r.status_code == 200 and len(r.content) > 1000:
                 with open("temp_foto.jpg", "wb") as f:
                     f.write(r.content)
                 with open("temp_foto.jpg", "rb") as f:
@@ -111,7 +113,7 @@ async def foto_cmd(update, context):
                 await status.delete()
                 os.remove("temp_foto.jpg")
             else:
-                await status.edit(f"❌ Не удалось сгенерировать.")
+                await status.edit("❌ Не удалось сгенерировать. Попробуйте другой запрос.")
     except Exception as e:
         await status.edit(f"❌ Ошибка: {str(e)[:200]}")
 
