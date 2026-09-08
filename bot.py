@@ -86,40 +86,22 @@ def _foto_request(prompt):
     return r.content
 
 def _vid_request(photo_path, prompt):
-    HF_TOKEN = os.environ.get("HF_TOKEN", "")
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-
-    with open(photo_path, "rb") as f:
-        img_bytes = f.read()
-
-    API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-video-diffusion-image-to-video"
-    r = requests.post(API_URL, headers=headers, data=img_bytes, timeout=300)
-
-    if r.status_code == 200:
-        out_path = "temp_video.mp4"
-        with open(out_path, "wb") as f:
-            f.write(r.content)
-        return out_path
-
-    if r.status_code == 503:
-        import time
-        time.sleep(30)
-        r = requests.post(API_URL, headers=headers, data=img_bytes, timeout=300)
-        if r.status_code == 200:
-            out_path = "temp_video.mp4"
-            with open(out_path, "wb") as f:
-                f.write(r.content)
-            return out_path
-
-    API_URL2 = "https://router.huggingface.co/hf-inference/models/damo-vilab/text-to-video-ms-1.7b"
-    r2 = requests.post(API_URL2, headers=headers, json={"inputs": prompt}, timeout=300)
-    if r2.status_code == 200:
-        out_path = "temp_video.mp4"
-        with open(out_path, "wb") as f:
-            f.write(r2.content)
-        return out_path
-
-    raise Exception(f"API error: {r.status_code} {r.text[:200]}")
+    from gradio_client import Client
+    c = Client("multimodalart/stable-video-diffusion")
+    result = c.predict(
+        image=photo_path,
+        seed=0,
+        randomize_seed=True,
+        motion_bucket_id=127,
+        fps_id=6,
+        api_name="/video"
+    )
+    video_data = result[0]
+    video_path = video_data["video"]
+    out_path = "temp_video.mp4"
+    import shutil
+    shutil.copy(video_path, out_path)
+    return out_path
 
 async def gpt_cmd(update, context):
     if not context.args:
