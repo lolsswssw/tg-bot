@@ -3,7 +3,8 @@ import time
 import random
 import asyncio
 import logging
-import httpx
+import json
+import requests
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
@@ -25,6 +26,7 @@ logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 unlocked_users = set()
+vid_states = {}
 
 INSULTS = [
     "Ты как обновление Windows — все игнорируют 😤", "Твои шутки как Wi-Fi — слабые 📶",
@@ -56,6 +58,7 @@ async def help_cmd(update, context):
 
 `.gpt <вопрос>` – Вопрос нейросети
 `.foto <запрос>` – Генерация фото
+`.vid` – Генерация видео из фото
 `.troll` – Спам оскорблениями
 `.ping` – Задержка бота
 `.help` – Помощь
@@ -66,6 +69,52 @@ async def ping_cmd(update, context):
     msg = await update.message.reply_text("🏓 Пинг...")
     await msg.edit_text(f"🏓 Понг! ⏱️ {int((time.time()-start)*1000)}ms")
 
+def _gpt_request(question):
+    r = requests.post(
+        "https://text.pollinations.ai/openai",
+        json={"model": "openai", "messages": [{"role": "user", "content": question}], "max_tokens": 800},
+        timeout=120
+    )
+    data = r.json()
+    msg = data.get("choices", [{}])[0].get("message", {})
+    return msg.get("content", "") or msg.get("reasoning", "Нет ответа.")
+
+def _foto_request(prompt):
+    encoded = prompt.replace(" ", "%20")
+    url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&enhance=true&nologo=true"
+    r = requests.get(url, timeout=120)
+    return r.content
+
+def _vid_request(photo_path, prompt):
+    import imageio.v3 as iio
+    from PIL import Image, ImageFilter
+    import numpy as np
+
+    img = Image.open(photo_path).convert("RGB")
+    img = img.resize((512, 512), Image.LANCZOS)
+
+    frames = []
+    num_frames = 30
+
+    for i in range(num_frames):
+        frame = img.copy()
+        factor = 1.0 + 0.003 * i
+        new_size = (int(512 * factor), int(512 * factor))
+        resized = frame.resize(new_size, Image.LANCZOS)
+        left = (new_size[0] - 512) // 2
+        top = (new_size[1] - 512) // 2
+        cropped = resized.crop((left, top, left + 512, top + 512))
+
+        if i % 3 == 0:
+            cropped = cropped.filter(ImageFilter.SHARPEN)
+
+        arr = np.array(cropped)
+        frames.append(arr)
+
+    out_path = "temp_video.mp4"
+    iio.imwrite(out_path, frames, fps=15, codec="libx264", plugin="pyav")
+    return out_path
+
 async def gpt_cmd(update, context):
     if not context.args:
         await update.message.reply_text("Использование: `.gpt <вопрос>`"); return
@@ -73,25 +122,15 @@ async def gpt_cmd(update, context):
     status = await update.message.reply_text("🧠 Думаю...")
     await update.message.chat.send_action(ChatAction.TYPING)
     try:
-        async with httpx.AsyncClient(timeout=90.0) as http:
-            r = await http.get(
-                "https://text.pollinations.ai/",
-                params={
-                    "message": question,
-                    "model": "openai",
-                    "system": "Ты умный помощник. Отвечай на русском языке кратко и по делу."
-                }
-            )
-            if r.status_code == 200:
-                answer = r.text.strip()
-                if answer:
-                    await status.edit(f"🧠 *Ответ:*\n\n{answer}", parse_mode="Markdown")
-                else:
-                    await status.edit("❌ Пустой ответ от AI.")
-            else:
-                await status.edit(f"❌ Ошибка API: {r.status_code}")
+        loop = asyncio.get_event_loop()
+        answer = await loop.run_in_executor(None, _gpt_request, question)
+        try: await status.delete()
+        except: pass
+        await update.message.reply_text(answer[:4000])
     except Exception as e:
-        await status.edit(f"❌ Ошибка: {str(e)[:200]}")
+        try: await status.delete()
+        except: pass
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
 
 async def foto_cmd(update, context):
     if not context.args:
@@ -100,27 +139,82 @@ async def foto_cmd(update, context):
     status = await update.message.reply_text("🎨 Генерирую фото...")
     await update.message.chat.send_action(ChatAction.UPLOAD_PHOTO)
     try:
-        import urllib.parse
-        encoded = urllib.parse.quote(prompt)
-        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&model=flux&nologo=true&seed={random.randint(1,99999)}"
-        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as http:
-            r = await http.get(url)
-            if r.status_code == 200 and len(r.content) > 1000:
-                with open("temp_foto.jpg", "wb") as f:
-                    f.write(r.content)
-                with open("temp_foto.jpg", "rb") as f:
-                    await update.message.reply_photo(photo=f, caption=f"🎨 {prompt}")
-                await status.delete()
-                os.remove("temp_foto.jpg")
-            else:
-                await status.edit("❌ Не удалось сгенерировать. Попробуйте другой запрос.")
+        loop = asyncio.get_event_loop()
+        img_data = await loop.run_in_executor(None, _foto_request, prompt)
+        try: await status.delete()
+        except: pass
+        if len(img_data) > 1000:
+            with open("temp_foto.jpg", "wb") as f:
+                f.write(img_data)
+            with open("temp_foto.jpg", "rb") as f:
+                await update.message.reply_photo(photo=f, caption=f"🎨 {prompt}")
+            os.remove("temp_foto.jpg")
+        else:
+            await update.message.reply_text("❌ Не удалось.")
     except Exception as e:
-        await status.edit(f"❌ Ошибка: {str(e)[:200]}")
+        try: await status.delete()
+        except: pass
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+
+async def vid_cmd(update, context):
+    uid = update.effective_user.id
+    vid_states[uid] = {"step": "wait_photo"}
+    await update.message.reply_text("📹 Отправьте фото для создания видео:")
 
 async def troll_cmd(update, context):
     for insult in random.sample(INSULTS, min(10, len(INSULTS))):
         await update.message.reply_text(insult)
         await asyncio.sleep(0.5)
+
+# ============ VID STATE HANDLER ============
+
+async def handle_vid_photo(update, context):
+    uid = update.effective_user.id
+    state = vid_states.get(uid)
+    if not state or state["step"] != "wait_photo":
+        return False
+
+    photo = update.message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    photo_path = f"vid_photo_{uid}.jpg"
+    await file.download_to_drive(photo_path)
+
+    vid_states[uid] = {"step": "wait_prompt", "photo": photo_path}
+    await update.message.reply_text("✅ Фото получено! Теперь напишите промт (описание движения):")
+    return True
+
+async def handle_vid_prompt(update, context):
+    uid = update.effective_user.id
+    state = vid_states.get(uid)
+    if not state or state["step"] != "wait_prompt":
+        return False
+
+    prompt = update.message.text
+    photo_path = state["photo"]
+    del vid_states[uid]
+
+    status = await update.message.reply_text("🎬 Создаю видео...")
+    await update.message.chat.send_action(ChatAction.UPLOAD_VIDEO)
+    try:
+        loop = asyncio.get_event_loop()
+        video_path = await loop.run_in_executor(None, _vid_request, photo_path, prompt)
+        try: await status.delete()
+        except: pass
+
+        if os.path.exists(video_path) and os.path.getsize(video_path) > 1000:
+            with open(video_path, "rb") as vf:
+                await update.message.reply_video(video=vf, caption=f"🎬 {prompt}")
+            os.remove(video_path)
+        else:
+            await update.message.reply_text("❌ Не удалось создать видео.")
+    except Exception as e:
+        try: await status.delete()
+        except: pass
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+
+    if os.path.exists(photo_path):
+        os.remove(photo_path)
+    return True
 
 # ============ MAIN ============
 
@@ -130,14 +224,20 @@ async def main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in AUTHORIZED_USERS and user_id not in ADMIN_USERS: return
     if not await check_password(update, context): return
 
+    if update.message.photo and not update.message.text:
+        if await handle_vid_photo(update, context): return
+
     text = (update.message.text or "").strip().lower()
     args = text.split()
     cmd = args[0] if args else ""
     cmd_args = args[1:]
 
+    if vid_states.get(user_id, {}).get("step") == "wait_prompt":
+        if await handle_vid_prompt(update, context): return
+
     CMDS = {
         ".help": help_cmd, ".ping": ping_cmd,
-        ".gpt": gpt_cmd, ".foto": foto_cmd, ".troll": troll_cmd,
+        ".gpt": gpt_cmd, ".foto": foto_cmd, ".vid": vid_cmd, ".troll": troll_cmd,
     }
 
     if cmd in CMDS:
