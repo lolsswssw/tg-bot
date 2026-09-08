@@ -89,8 +89,9 @@ def _vid_request(photo_path, prompt):
     POLLI_KEY = os.environ.get("POLLI_KEY", "")
     encoded = urllib.parse.quote(prompt)
 
-    url = f"https://gen.pollinations.ai/video/{encoded}?key={POLLI_KEY}&model=minimax/minimax-h3-max-turbo"
-    r = requests.get(url, timeout=180)
+    url = f"https://gen.pollinations.ai/video/{encoded}?model=minimax/minimax-h3-max-turbo"
+    headers = {"Authorization": f"Bearer {POLLI_KEY}"}
+    r = requests.get(url, headers=headers, timeout=180)
 
     if r.status_code == 200 and "video" in r.headers.get("content-type", ""):
         out_path = "temp_video.mp4"
@@ -98,7 +99,7 @@ def _vid_request(photo_path, prompt):
             f.write(r.content)
         return out_path
 
-    raise Exception(f"Video API error: {r.status_code}")
+    raise Exception(f"Video API error: {r.status_code} {r.text[:200]}")
 
 async def gpt_cmd(update, context):
     if not context.args:
