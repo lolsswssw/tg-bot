@@ -86,9 +86,8 @@ def _foto_request(prompt):
     return r.content
 
 def _vid_request(photo_path, prompt):
-    import imageio.v3 as iio
     from PIL import Image
-    import numpy as np
+    import io
 
     img = Image.open(photo_path).convert("RGB")
     img = img.resize((480, 480), Image.LANCZOS)
@@ -104,10 +103,17 @@ def _vid_request(photo_path, prompt):
         left = (new_w - 480) // 2
         top = (new_h - 480) // 2
         cropped = resized.crop((left, top, left + 480, top + 480))
-        frames.append(np.array(cropped))
+        frames.append(cropped)
 
-    out_path = "temp_video.mp4"
-    iio.imwrite(out_path, np.stack(frames), fps=12, codec="libx264")
+    out_path = "temp_video.gif"
+    frames[0].save(
+        out_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=80,
+        loop=0,
+        optimize=True
+    )
     return out_path
 
 async def gpt_cmd(update, context):
@@ -198,7 +204,7 @@ async def handle_vid_prompt(update, context):
 
         if os.path.exists(video_path) and os.path.getsize(video_path) > 1000:
             with open(video_path, "rb") as vf:
-                await update.message.reply_video(video=vf, caption=f"🎬 {prompt}")
+                await update.message.reply_animation(animation=vf, caption=f"🎬 {prompt}")
             os.remove(video_path)
         else:
             await update.message.reply_text("❌ Не удалось создать видео.")
