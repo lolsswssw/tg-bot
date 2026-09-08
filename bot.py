@@ -86,34 +86,26 @@ def _foto_request(prompt):
     return r.content
 
 def _vid_request(photo_path, prompt):
-    from PIL import Image
-
-    img = Image.open(photo_path).convert("RGB")
-    img = img.resize((320, 320), Image.LANCZOS)
-
-    frames = []
-    num_frames = 12
-
-    for i in range(num_frames):
-        factor = 1.0 + 0.008 * i
-        new_w = int(320 * factor)
-        new_h = int(320 * factor)
-        resized = img.resize((new_w, new_h), Image.LANCZOS)
-        left = (new_w - 320) // 2
-        top = (new_h - 320) // 2
-        cropped = resized.crop((left, top, left + 320, top + 320))
-        frames.append(cropped)
-
-    out_path = "temp_video.gif"
-    frames[0].save(
-        out_path,
-        save_all=True,
-        append_images=frames[1:],
-        duration=100,
-        loop=0,
-        optimize=True
-    )
-    return out_path
+    import base64
+    API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-video-diffusion-image-to-video"
+    with open(photo_path, "rb") as f:
+        img_bytes = f.read()
+    r = requests.post(API_URL, data=img_bytes, timeout=300)
+    if r.status_code == 200:
+        out_path = "temp_video.mp4"
+        with open(out_path, "wb") as f:
+            f.write(r.content)
+        return out_path
+    else:
+        API_URL2 = "https://api-inference.huggingface.co/models/ali-vilab/text-to-video-ms-1.7b"
+        r2 = requests.post(API_URL2, json={"inputs": prompt}, timeout=300)
+        if r2.status_code == 200:
+            out_path = "temp_video.mp4"
+            with open(out_path, "wb") as f:
+                f.write(r2.content)
+            return out_path
+        else:
+            raise Exception(f"API error: {r2.status_code}")
 
 async def gpt_cmd(update, context):
     if not context.args:
@@ -203,7 +195,10 @@ async def handle_vid_prompt(update, context):
 
         if os.path.exists(video_path) and os.path.getsize(video_path) > 1000:
             with open(video_path, "rb") as vf:
-                await update.message.reply_animation(animation=vf, caption=f"🎬 {prompt}")
+                if video_path.endswith(".mp4"):
+                    await update.message.reply_video(video=vf, caption=f"🎬 {prompt}")
+                else:
+                    await update.message.reply_animation(animation=vf, caption=f"🎬 {prompt}")
             os.remove(video_path)
         else:
             await update.message.reply_text("❌ Не удалось создать видео.")
