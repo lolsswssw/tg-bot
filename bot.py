@@ -26,8 +26,6 @@ logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 unlocked_users = set()
-vid_states = {}
-
 INSULTS = [
     "Ты как обновление Windows — все игнорируют 😤", "Твои шутки как Wi-Fi — слабые 📶",
     "Ты как NullPointerException 💀", "Ты ошибка, которую Google не найдёт 🔎",
@@ -58,7 +56,7 @@ async def help_cmd(update, context):
 
 `.gpt <вопрос>` – Вопрос нейросети
 `.foto <запрос>` – Генерация фото
-`.vid` – Генерация видео из фото
+`.vid <описание>` – Генерация видео
 `.troll` – Спам оскорблениями
 `.ping` – Задержка бота
 `.help` – Помощь
@@ -88,46 +86,19 @@ def _foto_request(prompt):
 def _vid_request(photo_path, prompt):
     import urllib.parse
 
-    # Method 1: Pollinations video
-    try:
-        encoded = urllib.parse.quote(prompt)
-        url = f"https://video.pollinations.ai/{encoded}?image={photo_path}&model=fast"
-        r = requests.get(url, timeout=120)
-        if r.status_code == 200 and len(r.content) > 5000:
-            out_path = "temp_video.mp4"
-            with open(out_path, "wb") as f:
-                f.write(r.content)
-            return out_path
-    except:
-        pass
+    POLLI_KEY = os.environ.get("POLLI_KEY", "")
+    encoded = urllib.parse.quote(prompt)
 
-    # Method 2: HuggingFace Space
-    try:
-        from gradio_client import Client
-        from PIL import Image
-        img = Image.open(photo_path)
-        img = img.resize((512, 512), Image.LANCZOS)
-        resized_path = "temp_input.jpg"
-        img.save(resized_path, quality=85)
-        c = Client("multimodalart/stable-video-diffusion")
-        result = c.predict(
-            image=resized_path,
-            seed=0,
-            randomize_seed=True,
-            motion_bucket_id=50,
-            fps_id=4,
-            api_name="/video"
-        )
-        video_data = result[0]
-        video_path = video_data["video"]
+    url = f"https://gen.pollinations.ai/video/{encoded}?key={POLLI_KEY}&model=minimax/minimax-h3-max-turbo"
+    r = requests.get(url, timeout=180)
+
+    if r.status_code == 200 and "video" in r.headers.get("content-type", ""):
         out_path = "temp_video.mp4"
-        import shutil
-        shutil.copy(video_path, out_path)
+        with open(out_path, "wb") as f:
+            f.write(r.content)
         return out_path
-    except:
-        pass
 
-    raise Exception("Video generation failed")
+    raise Exception(f"Video API error: {r.status_code}")
 
 async def gpt_cmd(update, context):
     if not context.args:
@@ -171,50 +142,17 @@ async def foto_cmd(update, context):
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
 
 async def vid_cmd(update, context):
-    uid = update.effective_user.id
-    vid_states[uid] = {"step": "wait_photo"}
-    await update.message.reply_text("📹 Отправьте фото для создания видео:")
-
-async def troll_cmd(update, context):
-    for insult in random.sample(INSULTS, min(10, len(INSULTS))):
-        await update.message.reply_text(insult)
-        await asyncio.sleep(0.5)
-
-# ============ VID STATE HANDLER ============
-
-async def handle_vid_photo(update, context):
-    uid = update.effective_user.id
-    state = vid_states.get(uid)
-    if not state or state["step"] != "wait_photo":
-        return False
-
-    photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    photo_path = f"vid_photo_{uid}.jpg"
-    await file.download_to_drive(photo_path)
-
-    vid_states[uid] = {"step": "wait_prompt", "photo": photo_path}
-    await update.message.reply_text("✅ Фото получено! Теперь напишите промт (описание движения):")
-    return True
-
-async def handle_vid_prompt(update, context):
-    uid = update.effective_user.id
-    state = vid_states.get(uid)
-    if not state or state["step"] != "wait_prompt":
-        return False
-
-    prompt = update.message.text
-    photo_path = state["photo"]
-    del vid_states[uid]
-
+    if not context.args:
+        await update.message.reply_text("Использование: `.vid <описание видео>`")
+        return
+    prompt = " ".join(context.args)
     status = await update.message.reply_text("🎬 Создаю видео...")
     await update.message.chat.send_action(ChatAction.UPLOAD_VIDEO)
     try:
         loop = asyncio.get_event_loop()
-        video_path = await loop.run_in_executor(None, _vid_request, photo_path, prompt)
+        video_path = await loop.run_in_executor(None, _vid_request, None, prompt)
         try: await status.delete()
         except: pass
-
         if os.path.exists(video_path) and os.path.getsize(video_path) > 1000:
             with open(video_path, "rb") as vf:
                 await update.message.reply_video(video=vf, caption=f"🎬 {prompt}")
@@ -226,9 +164,10 @@ async def handle_vid_prompt(update, context):
         except: pass
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
 
-    if os.path.exists(photo_path):
-        os.remove(photo_path)
-    return True
+async def troll_cmd(update, context):
+    for insult in random.sample(INSULTS, min(10, len(INSULTS))):
+        await update.message.reply_text(insult)
+        await asyncio.sleep(0.5)
 
 # ============ MAIN ============
 
@@ -238,16 +177,10 @@ async def main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in AUTHORIZED_USERS and user_id not in ADMIN_USERS: return
     if not await check_password(update, context): return
 
-    if update.message.photo and not update.message.text:
-        if await handle_vid_photo(update, context): return
-
     text = (update.message.text or "").strip().lower()
     args = text.split()
     cmd = args[0] if args else ""
     cmd_args = args[1:]
-
-    if vid_states.get(user_id, {}).get("step") == "wait_prompt":
-        if await handle_vid_prompt(update, context): return
 
     CMDS = {
         ".help": help_cmd, ".ping": ping_cmd,
