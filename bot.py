@@ -85,21 +85,20 @@ def _foto_request(prompt):
 
 def _vid_request(photo_path, prompt):
     from PIL import Image
-    import io, urllib.parse, hashlib
+    import io, urllib.parse
 
     encoded = prompt.replace(" ", "%20")
 
     frames = []
-    for i in range(8):
-        suffix = hashlib.md5(f"{prompt}_frame_{i}".encode()).hexdigest()[:8]
-        url = f"https://image.pollinations.ai/prompt/{encoded}?width=512&height=512&nologo=true&seed={i}&model=flux&enhance=true&suffix={suffix}"
-        r = requests.get(url, timeout=120)
-        if r.status_code == 200:
+    for i in range(4):
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=480&height=480&nologo=true&seed={i}&enhance=true"
+        r = requests.get(url, timeout=60)
+        if r.status_code == 200 and len(r.content) > 1000:
             img = Image.open(io.BytesIO(r.content)).convert("RGB")
-            img = img.resize((512, 512), Image.LANCZOS)
+            img = img.resize((480, 480), Image.LANCZOS)
             frames.append(img)
 
-    if len(frames) < 3:
+    if len(frames) < 2:
         raise Exception("Failed to generate frames")
 
     out_path = "temp_video.gif"
@@ -107,7 +106,7 @@ def _vid_request(photo_path, prompt):
         out_path,
         save_all=True,
         append_images=frames[1:],
-        duration=300,
+        duration=500,
         loop=0,
         optimize=True
     )
@@ -159,14 +158,14 @@ async def vid_cmd(update, context):
         await update.message.reply_text("Использование: `.vid <описание видео>`")
         return
     prompt = " ".join(context.args)
-    status = await update.message.reply_text("🎬 Создаю видео...")
+    status = await update.message.reply_text("🎬 Создаю видео (это займёт ~30 сек)...")
     await update.message.chat.send_action(ChatAction.UPLOAD_VIDEO)
     try:
         loop = asyncio.get_event_loop()
         video_path = await loop.run_in_executor(None, _vid_request, None, prompt)
         try: await status.delete()
         except: pass
-        if os.path.exists(video_path) and os.path.getsize(video_path) > 1000:
+        if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 1000:
             with open(video_path, "rb") as vf:
                 await update.message.reply_animation(animation=vf, caption=f"🎬 {prompt}")
             os.remove(video_path)
