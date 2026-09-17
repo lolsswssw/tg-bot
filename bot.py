@@ -84,22 +84,34 @@ def _foto_request(prompt):
     return r.content
 
 def _vid_request(photo_path, prompt):
-    import urllib.parse
+    from PIL import Image
+    import io, urllib.parse, hashlib
 
-    POLLI_KEY = os.environ.get("POLLI_KEY", "")
-    encoded = urllib.parse.quote(prompt)
+    encoded = prompt.replace(" ", "%20")
 
-    url = f"https://gen.pollinations.ai/video/{encoded}?model=minimax/minimax-h3-max-turbo"
-    headers = {"Authorization": f"Bearer {POLLI_KEY}"}
-    r = requests.get(url, headers=headers, timeout=180)
+    frames = []
+    for i in range(8):
+        suffix = hashlib.md5(f"{prompt}_frame_{i}".encode()).hexdigest()[:8]
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=512&height=512&nologo=true&seed={i}&model=flux&enhance=true&suffix={suffix}"
+        r = requests.get(url, timeout=120)
+        if r.status_code == 200:
+            img = Image.open(io.BytesIO(r.content)).convert("RGB")
+            img = img.resize((512, 512), Image.LANCZOS)
+            frames.append(img)
 
-    if r.status_code == 200 and "video" in r.headers.get("content-type", ""):
-        out_path = "temp_video.mp4"
-        with open(out_path, "wb") as f:
-            f.write(r.content)
-        return out_path
+    if len(frames) < 3:
+        raise Exception("Failed to generate frames")
 
-    raise Exception(f"Video API error: {r.status_code} {r.text[:200]}")
+    out_path = "temp_video.gif"
+    frames[0].save(
+        out_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=300,
+        loop=0,
+        optimize=True
+    )
+    return out_path
 
 async def gpt_cmd(update, context):
     if not context.args:
@@ -156,7 +168,7 @@ async def vid_cmd(update, context):
         except: pass
         if os.path.exists(video_path) and os.path.getsize(video_path) > 1000:
             with open(video_path, "rb") as vf:
-                await update.message.reply_video(video=vf, caption=f"🎬 {prompt}")
+                await update.message.reply_animation(animation=vf, caption=f"🎬 {prompt}")
             os.remove(video_path)
         else:
             await update.message.reply_text("❌ Не удалось создать видео.")
